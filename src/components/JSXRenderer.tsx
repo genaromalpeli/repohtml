@@ -80,36 +80,42 @@ export default function JSXRenderer({ code, className }: JSXRendererProps) {
           useMemo: React.useMemo,
           useCallback: React.useCallback,
           useRef: React.useRef,
+          useContext: React.useContext,
+          useReducer: React.useReducer,
+          useLayoutEffect: React.useLayoutEffect,
         };
 
-        // Shadow global read-only properties to prevent "Cannot set property" errors
-        // if the transpiled code tries to declare them at the top level.
-        const globalsToShadow = ['fetch', 'location', 'history', 'navigator', 'screen', 'window', 'document', 'self', 'globalThis'];
+        // Protected globals that often cause "Cannot set property" errors
+        const protectedGlobals = ['fetch', 'location', 'history', 'navigator', 'screen', 'window', 'document', 'self', 'globalThis'];
         
         const filteredKeys: string[] = [];
         const filteredValues: any[] = [];
 
-        // Create a safe proxy for window/self/globalThis to prevent writes to read-only globals
+        // Add scope items
+        Object.entries(scope).forEach(([key, value]) => {
+          filteredKeys.push(key);
+          filteredValues.push(value);
+        });
+
+        // Create a safe proxy for window/self/globalThis
         const createSafeGlobal = (original: any) => {
           return new Proxy(original, {
             get(target, prop) {
               const value = target[prop];
               if (typeof value === 'function') {
-                // Bind functions to original to prevent "Illegal invocation"
                 return value.bind(target);
               }
               return value;
             },
             set(target, prop, value) {
-              // List of common read-only or sensitive globals to protect
-              if (['fetch', 'location', 'history', 'navigator', 'screen'].includes(prop as string)) {
-                console.warn(`Prevented overwrite of read-only global: ${String(prop)}`);
+              if (protectedGlobals.includes(prop as string)) {
+                console.warn(`Prevented overwrite of protected global: ${String(prop)}`);
                 return true; 
               }
               try {
                 target[prop] = value;
               } catch (e) {
-                // Ignore errors when setting properties
+                // Ignore errors
               }
               return true;
             }
@@ -118,37 +124,40 @@ export default function JSXRenderer({ code, className }: JSXRendererProps) {
 
         const safeWindow = createSafeGlobal(window);
 
-        // Add scope items
-        Object.entries(scope).forEach(([key, value]) => {
-          filteredKeys.push(key);
-          filteredValues.push(value);
-        });
+        // We will NOT pass protected globals as parameters to the Function constructor
+        // to avoid "Identifier 'x' has already been declared" if the code uses const/let.
+        // Instead, we will inject a preamble that shadows them using 'var'.
+        const preamble = protectedGlobals
+          .filter(g => !['window', 'self', 'globalThis'].includes(g))
+          .map(g => `var ${g} = window.${g};`)
+          .join('\n');
 
-        // Add shadows for globals
-        globalsToShadow.forEach(g => {
-          if (!filteredKeys.includes(g)) {
-            filteredKeys.push(g);
-            if (['window', 'self', 'globalThis'].includes(g)) {
-              filteredValues.push(safeWindow);
-            } else {
-              // Pass the real global value so it's still accessible for reading
-              try {
-                filteredValues.push((window as any)[g]);
-              } catch {
-                filteredValues.push(undefined);
-              }
-            }
-          }
-        });
+        // Add safe window reference to scope as a hidden argument
+        // We'll use a unique name that won't collide with user code
+        const SAFE_WINDOW_KEY = '__ARTIFY_SAFE_WINDOW__';
+        filteredKeys.push(SAFE_WINDOW_KEY);
+        filteredValues.push(safeWindow);
         
         const componentFactory = new Function(...filteredKeys, `
           "use strict";
+          const window = ${SAFE_WINDOW_KEY};
+          const self = window;
+          const globalThis = window;
+          
           return (function() {
-            ${transformed}
-            if (typeof ArtifyComponent === 'undefined') {
-              return null;
+            ${preamble}
+            // Wrap transformed code in a block to allow user to redeclare globals with const/let
+            try {
+              ${transformed}
+              if (typeof ArtifyComponent === 'undefined') {
+                return null;
+              }
+              return ArtifyComponent;
+            } catch (e) {
+              // If execution fails, we try to find the component in the scope
+              if (typeof ArtifyComponent !== 'undefined') return ArtifyComponent;
+              throw e;
             }
-            return ArtifyComponent;
           })();
         `);
         

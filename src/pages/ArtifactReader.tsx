@@ -28,6 +28,7 @@ import Markdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import JSXRenderer from '../components/JSXRenderer';
+import ConfirmationModal from '../components/ConfirmationModal';
 
 export default function ArtifactReader() {
   const { artifactId } = useParams();
@@ -39,6 +40,7 @@ export default function ArtifactReader() {
   const [copied, setCopied] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview');
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
   useEffect(() => {
     const fetchArtifact = async () => {
@@ -68,7 +70,11 @@ export default function ArtifactReader() {
 
   const handleDelete = async () => {
     if (!artifact) return;
-    if (!window.confirm('Are you sure you want to delete this artifact?')) return;
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!artifact) return;
     try {
       await deleteDoc(doc(db, 'artifacts', artifactId!));
       // Update user storage usage
@@ -114,7 +120,7 @@ export default function ArtifactReader() {
     switch (artifact.type) {
       case 'html': {
         // Sanitize HTML to prevent "Cannot set property fetch of #<Window>" error
-        // by injecting a script that makes these globals configurable/writable
+        // by making these properties writable on the window instance or prototype.
         const injection = `
           <script>
             (function() {
@@ -129,8 +135,18 @@ export default function ArtifactReader() {
                     enumerable: true
                   });
                 } catch (e) {
-                  // If defineProperty fails, we try to shadow it with a var
-                  window[prop] = window[prop]; 
+                  try {
+                    const proto = Object.getPrototypeOf(window);
+                    const original = proto[prop];
+                    Object.defineProperty(proto, prop, {
+                      get: function() { return this['__' + prop] !== undefined ? this['__' + prop] : original; },
+                      set: function(v) { this['__' + prop] = v; },
+                      configurable: true
+                    });
+                  } catch (e2) {
+                    // Fallback to var shadowing if property is completely locked
+                    window[prop] = window[prop]; 
+                  }
                 }
               });
             })();
@@ -359,6 +375,15 @@ export default function ArtifactReader() {
           )}
         </AnimatePresence>
       </div>
+
+      <ConfirmationModal 
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={confirmDelete}
+        title="Delete Artifact"
+        message="Are you sure you want to delete this artifact? This action cannot be undone."
+        variant="danger"
+      />
     </div>
   );
 }

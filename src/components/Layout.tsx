@@ -21,6 +21,7 @@ import { logout, db, Folder, UserProfile, STORAGE_QUOTA_BYTES } from '../lib/fir
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, deleteDoc } from 'firebase/firestore';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import ConfirmationModal from './ConfirmationModal';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -36,6 +37,19 @@ export default function Layout({ user }: LayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   useEffect(() => {
     if (!user) return;
@@ -63,11 +77,34 @@ export default function Layout({ user }: LayoutProps) {
   };
 
   const handleDeleteFolder = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this folder? All artifacts inside will remain but will be moved to the main dashboard.')) return;
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Folder',
+      message: 'Are you sure you want to delete this folder? All artifacts inside will remain but will be moved to the main dashboard.',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'folders', id));
+        } catch (err) {
+          console.error('Error deleting folder:', err);
+        }
+      }
+    });
+  };
+
+  const handleCreateFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFolderName.trim() || !user) return;
     try {
-      await deleteDoc(doc(db, 'folders', id));
+      await addDoc(collection(db, 'folders'), {
+        name: newFolderName.trim(),
+        ownerId: user.uid,
+        parentId: null,
+        createdAt: serverTimestamp()
+      });
+      setNewFolderName('');
+      setIsFolderModalOpen(false);
     } catch (err) {
-      console.error('Error deleting folder:', err);
+      console.error('Error creating folder:', err);
     }
   };
 
@@ -131,21 +168,7 @@ export default function Layout({ user }: LayoutProps) {
               <div className="mt-8 mb-2 flex items-center justify-between px-2">
                 <div className="text-xs font-semibold text-zinc-600 uppercase tracking-widest">Folders</div>
                 <button 
-                  onClick={async () => {
-                    const name = prompt('Enter folder name:');
-                    if (name && user) {
-                      try {
-                        await addDoc(collection(db, 'folders'), {
-                          name: name.trim(),
-                          ownerId: user.uid,
-                          parentId: null,
-                          createdAt: serverTimestamp()
-                        });
-                      } catch (err) {
-                        console.error('Error creating folder:', err);
-                      }
-                    }
-                  }}
+                  onClick={() => setIsFolderModalOpen(true)}
                   className="p-1 hover:bg-zinc-800 rounded-md text-zinc-500 hover:text-zinc-100 transition-colors"
                 >
                   <Plus className="w-4 h-4" />
@@ -266,6 +289,76 @@ export default function Layout({ user }: LayoutProps) {
           <Outlet />
         </main>
       </div>
+
+      {/* New Folder Modal */}
+      <AnimatePresence>
+        {isFolderModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsFolderModalOpen(false)}
+              className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <h2 className="text-2xl font-bold">New Folder</h2>
+                <button 
+                  onClick={() => setIsFolderModalOpen(false)}
+                  className="p-2 hover:bg-zinc-800 rounded-full text-zinc-500 transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateFolder} className="space-y-6">
+                <div>
+                  <label className="block text-sm font-semibold text-zinc-400 mb-2">Folder Name</label>
+                  <input 
+                    autoFocus
+                    type="text" 
+                    placeholder="e.g. Market Research" 
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 transition-all"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => setIsFolderModalOpen(false)}
+                    className="flex-1 py-3 bg-zinc-800 text-zinc-100 rounded-xl font-semibold hover:bg-zinc-700 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={!newFolderName.trim()}
+                    className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-500 transition-all disabled:opacity-50"
+                  >
+                    Create Folder
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Modal */}
+      <ConfirmationModal 
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+      />
     </div>
   );
 }

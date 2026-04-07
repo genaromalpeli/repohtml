@@ -36,6 +36,7 @@ import {
 import { auth, db, Artifact, Folder, UserProfile, STORAGE_QUOTA_BYTES } from '../lib/firebase';
 import { format } from 'date-fns';
 import { Star, AlertCircle } from 'lucide-react';
+import ConfirmationModal from '../components/ConfirmationModal';
 
 interface DashboardProps {
   filter?: 'favorites' | 'recent';
@@ -53,6 +54,20 @@ export default function Dashboard({ filter }: DashboardProps) {
   const [newFolderName, setNewFolderName] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant?: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   // Fetch User Profile
   useEffect(() => {
@@ -232,27 +247,41 @@ export default function Dashboard({ filter }: DashboardProps) {
   };
 
   const handleDeleteFolder = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this folder? All artifacts inside will remain but will be moved to the main dashboard.')) return;
-    try {
-      await deleteDoc(doc(db, 'folders', id));
-    } catch (err) {
-      console.error('Error deleting folder:', err);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Folder',
+      message: 'Are you sure you want to delete this folder? All artifacts inside will remain but will be moved to the main dashboard.',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'folders', id));
+        } catch (err) {
+          console.error('Error deleting folder:', err);
+        }
+      }
+    });
   };
 
   const handleDeleteArtifact = async (id: string, size: number) => {
-    if (!window.confirm('Are you sure you want to delete this artifact?')) return;
-    try {
-      await deleteDoc(doc(db, 'artifacts', id));
-      // Update user storage usage
-      if (auth.currentUser) {
-        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-          storageUsed: increment(-size)
-        });
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Artifact',
+      message: 'Are you sure you want to delete this artifact? This action cannot be undone.',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'artifacts', id));
+          // Update user storage usage
+          if (auth.currentUser) {
+            await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+              storageUsed: increment(-size)
+            });
+          }
+        } catch (err) {
+          console.error('Error deleting artifact:', err);
+        }
       }
-    } catch (err) {
-      console.error('Error deleting artifact:', err);
-    }
+    });
   };
 
   const filteredArtifacts = artifacts.filter(a => 
@@ -595,6 +624,15 @@ export default function Dashboard({ filter }: DashboardProps) {
           </div>
         )}
       </AnimatePresence>
+      {/* Confirmation Modal */}
+      <ConfirmationModal 
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        variant={confirmModal.variant}
+      />
     </div>
   );
 }
