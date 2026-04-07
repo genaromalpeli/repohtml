@@ -14,11 +14,20 @@ import {
   Info,
   Tag,
   Calendar,
-  Sparkles
+  Sparkles,
+  FileText,
+  FileCode,
+  FileJson,
+  Eye,
+  Code as CodeIcon
 } from 'lucide-react';
-import { doc, getDoc, deleteDoc, updateDoc } from 'firebase/firestore';
-import { db, Artifact } from '../lib/firebase';
+import { doc, getDoc, deleteDoc, updateDoc, increment } from 'firebase/firestore';
+import { db, Artifact, auth } from '../lib/firebase';
 import { format } from 'date-fns';
+import Markdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import JSXRenderer from '../components/JSXRenderer';
 
 export default function ArtifactReader() {
   const { artifactId } = useParams();
@@ -29,6 +38,7 @@ export default function ArtifactReader() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [copied, setCopied] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview');
 
   useEffect(() => {
     const fetchArtifact = async () => {
@@ -57,12 +67,139 @@ export default function ArtifactReader() {
   };
 
   const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this artifact?')) return;
+    if (!artifact) return;
+    if (!window.confirm('Are you sure you want to delete this artifact?')) return;
     try {
       await deleteDoc(doc(db, 'artifacts', artifactId!));
+      // Update user storage usage
+      if (auth.currentUser) {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          storageUsed: increment(-artifact.size)
+        });
+      }
       navigate('/dashboard');
     } catch (err) {
       console.error('Error deleting artifact:', err);
+    }
+  };
+
+  const renderContent = () => {
+    if (!artifact) return null;
+
+    // If user explicitly wants to see code
+    if (viewMode === 'code' && artifact.type !== 'html') {
+      const language = artifact.type === 'jsx' ? 'javascript' : 
+                       artifact.type === 'tsx' ? 'typescript' : 
+                       artifact.type;
+      return (
+        <div className="w-full h-full overflow-hidden bg-[#1d1f21]">
+          <SyntaxHighlighter 
+            language={language} 
+            style={atomDark}
+            customStyle={{ 
+              margin: 0, 
+              padding: '2rem', 
+              height: '100%', 
+              fontSize: '0.9rem',
+              lineHeight: '1.5'
+            }}
+            showLineNumbers
+          >
+            {artifact.content}
+          </SyntaxHighlighter>
+        </div>
+      );
+    }
+
+    switch (artifact.type) {
+      case 'html': {
+        // Sanitize HTML to prevent "Cannot set property fetch of #<Window>" error
+        // by injecting a script that makes these globals configurable/writable
+        const injection = `
+          <script>
+            (function() {
+              const protected = ['fetch', 'location', 'history', 'navigator', 'screen'];
+              protected.forEach(prop => {
+                try {
+                  const original = window[prop];
+                  Object.defineProperty(window, prop, {
+                    value: original,
+                    writable: true,
+                    configurable: true,
+                    enumerable: true
+                  });
+                } catch (e) {
+                  // If defineProperty fails, we try to shadow it with a var
+                  window[prop] = window[prop]; 
+                }
+              });
+            })();
+          </script>
+        `;
+        
+        let sanitizedContent = artifact.content;
+        if (sanitizedContent.includes('<head>')) {
+          sanitizedContent = sanitizedContent.replace('<head>', '<head>' + injection);
+        } else if (sanitizedContent.includes('<html>')) {
+          sanitizedContent = sanitizedContent.replace('<html>', '<html><head>' + injection + '</head>');
+        } else {
+          sanitizedContent = injection + sanitizedContent;
+        }
+
+        return (
+          <iframe 
+            srcDoc={sanitizedContent}
+            title={artifact.title}
+            className="w-full h-full border-none bg-white"
+            sandbox="allow-scripts allow-same-origin"
+          />
+        );
+      }
+      case 'markdown':
+        return (
+          <div className="w-full h-full overflow-y-auto bg-white p-8 md:p-12 lg:p-20 selection:bg-indigo-100">
+            <div className="max-w-3xl mx-auto prose prose-indigo prose-zinc lg:prose-xl">
+              <Markdown>{artifact.content}</Markdown>
+            </div>
+          </div>
+        );
+      case 'jsx':
+      case 'tsx':
+        return (
+          <div className="w-full h-full overflow-y-auto bg-zinc-950">
+            <JSXRenderer code={artifact.content} className="w-full h-full" />
+          </div>
+        );
+      default:
+        // Other code types (json, css, js, ts) - always show code if not jsx/tsx/md/html
+        return (
+          <div className="w-full h-full overflow-hidden bg-[#1d1f21]">
+            <SyntaxHighlighter 
+              language={artifact.type} 
+              style={atomDark}
+              customStyle={{ 
+                margin: 0, 
+                padding: '2rem', 
+                height: '100%', 
+                fontSize: '0.9rem',
+                lineHeight: '1.5'
+              }}
+              showLineNumbers
+            >
+              {artifact.content}
+            </SyntaxHighlighter>
+          </div>
+        );
+    }
+  };
+
+  const getIcon = () => {
+    if (!artifact) return <Sparkles className="w-4 h-4 text-white" />;
+    switch (artifact.type) {
+      case 'html': return <Sparkles className="w-4 h-4 text-white" />;
+      case 'markdown': return <FileText className="w-4 h-4 text-white" />;
+      case 'json': return <FileJson className="w-4 h-4 text-white" />;
+      default: return <FileCode className="w-4 h-4 text-white" />;
     }
   };
 
@@ -79,6 +216,8 @@ export default function ArtifactReader() {
 
   if (!artifact) return null;
 
+  const canPreview = ['html', 'markdown', 'jsx', 'tsx'].includes(artifact.type);
+
   return (
     <div className="h-screen bg-zinc-950 flex flex-col overflow-hidden selection:bg-indigo-500/30">
       {/* Header */}
@@ -91,14 +230,33 @@ export default function ArtifactReader() {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shrink-0 shadow-lg shadow-indigo-600/20">
-              <Sparkles className="w-4 h-4 text-white" />
-            </div>
             <h1 className="font-bold text-lg truncate">{artifact.title}</h1>
+            <span className="px-2 py-0.5 bg-zinc-800 text-zinc-500 rounded text-[10px] font-bold uppercase tracking-wider">
+              {artifact.type}
+            </span>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {canPreview && artifact.type !== 'html' && (
+            <div className="flex bg-zinc-900 border border-zinc-800 rounded-xl p-1 mr-2">
+              <button 
+                onClick={() => setViewMode('preview')}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === 'preview' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                Preview
+              </button>
+              <button 
+                onClick={() => setViewMode('code')}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === 'code' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                <CodeIcon className="w-3.5 h-3.5" />
+                Code
+              </button>
+            </div>
+          )}
+
           <button 
             onClick={() => setShowInfo(!showInfo)}
             className={`p-2 rounded-lg transition-all ${showInfo ? 'bg-indigo-500/10 text-indigo-400' : 'hover:bg-zinc-900 text-zinc-400'}`}
@@ -129,14 +287,9 @@ export default function ArtifactReader() {
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Main Content (Iframe) */}
-        <div className="flex-1 bg-white relative">
-          <iframe 
-            srcDoc={artifact.content}
-            title={artifact.title}
-            className="w-full h-full border-none"
-            sandbox="allow-scripts allow-same-origin"
-          />
+        {/* Main Content */}
+        <div className="flex-1 relative overflow-hidden">
+          {renderContent()}
         </div>
 
         {/* Info Sidebar */}

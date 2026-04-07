@@ -1,5 +1,5 @@
 {
-  "name": "Artifact",
-  "description": "A minimalist workspace to store, organize, and share AI-generated HTML documents.",
+  "name": "Artify",
+  "description": "A minimalist workspace to store, organize, and share AI-generated documents and components.",
   "requestFramePermissions": []
 }

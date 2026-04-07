@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp, increment } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -8,18 +8,21 @@ export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const googleProvider = new GoogleAuthProvider();
 
+export const STORAGE_QUOTA_BYTES = 20 * 1024 * 1024; // 20MB per user
+
 export const signInWithGoogle = async () => {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
     
-    // Save user profile
+    // Save user profile with default quota if it doesn't exist
     await setDoc(doc(db, 'users', user.uid), {
       uid: user.uid,
       email: user.email,
       displayName: user.displayName,
       photoURL: user.photoURL,
-      lastLogin: serverTimestamp()
+      lastLogin: serverTimestamp(),
+      storageQuota: STORAGE_QUOTA_BYTES
     }, { merge: true });
     
     return user;
@@ -37,6 +40,8 @@ export interface UserProfile {
   email: string;
   displayName: string;
   photoURL: string;
+  storageUsed?: number;
+  storageQuota?: number;
   createdAt: Timestamp;
 }
 
@@ -52,9 +57,12 @@ export interface Artifact {
   id: string;
   title: string;
   content: string;
+  type: 'html' | 'markdown' | 'jsx' | 'tsx' | 'javascript' | 'typescript' | 'css' | 'json';
   ownerId: string;
   folderId: string | null;
   tags: string[];
+  isFavorite?: boolean;
+  size: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

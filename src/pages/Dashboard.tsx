@@ -28,21 +28,42 @@ import {
   serverTimestamp, 
   deleteDoc, 
   doc,
-  orderBy
+  orderBy,
+  updateDoc,
+  increment,
+  getDoc
 } from 'firebase/firestore';
-import { auth, db, Artifact, Folder } from '../lib/firebase';
+import { auth, db, Artifact, Folder, UserProfile, STORAGE_QUOTA_BYTES } from '../lib/firebase';
 import { format } from 'date-fns';
+import { Star, AlertCircle } from 'lucide-react';
 
-export default function Dashboard() {
+interface DashboardProps {
+  filter?: 'favorites' | 'recent';
+}
+
+export default function Dashboard({ filter }: DashboardProps) {
   const { folderId } = useParams();
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch User Profile
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    const unsubscribe = onSnapshot(doc(db, 'users', auth.currentUser.uid), (snapshot) => {
+      if (snapshot.exists()) {
+        setUserProfile(snapshot.data() as UserProfile);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Fetch Artifacts
   useEffect(() => {
@@ -61,6 +82,19 @@ export default function Dashboard() {
         where('folderId', '==', folderId),
         orderBy('createdAt', 'desc')
       );
+    } else if (filter === 'favorites') {
+      q = query(
+        collection(db, 'artifacts'), 
+        where('ownerId', '==', auth.currentUser.uid),
+        where('isFavorite', '==', true),
+        orderBy('createdAt', 'desc')
+      );
+    } else if (filter === 'recent') {
+      q = query(
+        collection(db, 'artifacts'), 
+        where('ownerId', '==', auth.currentUser.uid),
+        orderBy('createdAt', 'desc')
+      );
     }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -68,7 +102,7 @@ export default function Dashboard() {
       setArtifacts(artifactData);
     });
     return () => unsubscribe();
-  }, [folderId]);
+  }, [folderId, filter]);
 
   // Fetch Subfolders
   useEffect(() => {
@@ -87,27 +121,60 @@ export default function Dashboard() {
 
   // File Upload Logic
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser || !userProfile) return;
     setUploading(true);
+    setError(null);
+    
+    const currentUsed = userProfile.storageUsed || 0;
+    const quota = userProfile.storageQuota || STORAGE_QUOTA_BYTES;
     
     for (const file of acceptedFiles) {
-      if (file.type !== 'text/html' && !file.name.endsWith('.html')) {
-        console.error('Only HTML files are allowed');
+      if (file.size > 1024 * 1024) {
+        setError(`File ${file.name} is too large. Max 1MB per document.`);
         continue;
+      }
+
+      if (currentUsed + file.size > quota) {
+        setError("Storage quota exceeded. Please delete some documents to free up space.");
+        break;
+      }
+
+      const extension = file.name.split('.').pop()?.toLowerCase();
+      let type: Artifact['type'] = 'html';
+      
+      if (extension === 'md' || extension === 'markdown') type = 'markdown';
+      else if (extension === 'jsx') type = 'jsx';
+      else if (extension === 'tsx') type = 'tsx';
+      else if (extension === 'js') type = 'javascript';
+      else if (extension === 'ts') type = 'typescript';
+      else if (extension === 'css') type = 'css';
+      else if (extension === 'json') type = 'json';
+      else if (extension === 'html' || extension === 'htm') type = 'html';
+      else {
+        type = 'markdown'; 
       }
 
       const reader = new FileReader();
       reader.onload = async (e) => {
         const content = e.target?.result as string;
+        const fileSize = new Blob([content]).size;
+
         try {
           await addDoc(collection(db, 'artifacts'), {
-            title: file.name.replace('.html', ''),
+            title: file.name.replace(/\.[^/.]+$/, ""),
             content,
+            type,
+            size: fileSize,
             ownerId: auth.currentUser?.uid,
             folderId: folderId || null,
-            tags: [],
+            tags: [type],
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
+          });
+
+          // Update user storage usage
+          await updateDoc(doc(db, 'users', auth.currentUser!.uid), {
+            storageUsed: increment(fileSize)
           });
         } catch (err) {
           console.error('Error uploading artifact:', err);
@@ -117,12 +184,19 @@ export default function Dashboard() {
     }
     
     setUploading(false);
-    setIsUploadModalOpen(false);
-  }, [folderId]);
+    if (!error) setIsUploadModalOpen(false);
+  }, [folderId, userProfile, error]);
 
   const dropzoneOptions: any = { 
     onDrop,
-    accept: { 'text/html': ['.html'] },
+    accept: { 
+      'text/html': ['.html', '.htm'],
+      'text/markdown': ['.md', '.markdown'],
+      'text/javascript': ['.js', '.jsx'],
+      'text/typescript': ['.ts', '.tsx'],
+      'text/css': ['.css'],
+      'application/json': ['.json']
+    },
     multiple: true
   };
 
@@ -146,10 +220,36 @@ export default function Dashboard() {
     }
   };
 
-  const handleDeleteArtifact = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this artifact?')) return;
+  const handleToggleFavorite = async (id: string, current: boolean) => {
+    try {
+      await updateDoc(doc(db, 'artifacts', id), {
+        isFavorite: !current,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error('Error toggling favorite:', err);
+    }
+  };
+
+  const handleDeleteFolder = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this folder? All artifacts inside will remain but will be moved to the main dashboard.')) return;
+    try {
+      await deleteDoc(doc(db, 'folders', id));
+    } catch (err) {
+      console.error('Error deleting folder:', err);
+    }
+  };
+
+  const handleDeleteArtifact = async (id: string, size: number) => {
+    if (!window.confirm('Are you sure you want to delete this artifact?')) return;
     try {
       await deleteDoc(doc(db, 'artifacts', id));
+      // Update user storage usage
+      if (auth.currentUser) {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          storageUsed: increment(-size)
+        });
+      }
     } catch (err) {
       console.error('Error deleting artifact:', err);
     }
@@ -166,10 +266,10 @@ export default function Dashboard() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
         <div>
           <h1 className="text-3xl font-bold tracking-tight mb-2">
-            {folderId ? 'Folder Contents' : 'Dashboard'}
+            {folderId ? 'Folder Contents' : filter === 'favorites' ? 'Favorites' : filter === 'recent' ? 'Recent' : 'Dashboard'}
           </h1>
           <p className="text-zinc-500">
-            {folderId ? 'View and manage artifacts in this folder.' : 'Welcome back! Here are your latest AI artifacts.'}
+            {folderId ? 'View and manage artifacts in this folder.' : filter === 'favorites' ? 'Your starred documents.' : filter === 'recent' ? 'Recently added documents.' : 'Welcome back! Here are your latest AI documents.'}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -185,7 +285,7 @@ export default function Dashboard() {
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-500 transition-all text-sm font-medium shadow-lg shadow-indigo-600/20"
           >
             <Upload className="w-4 h-4" />
-            Upload HTML
+            Upload Artifact
           </button>
         </div>
       </div>
@@ -196,7 +296,7 @@ export default function Dashboard() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
           <input 
             type="text" 
-            placeholder="Search artifacts..." 
+            placeholder="Search documents..." 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 transition-all"
@@ -217,10 +317,6 @@ export default function Dashboard() {
               <List className="w-4 h-4" />
             </button>
           </div>
-          <button className="flex items-center gap-2 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-sm text-zinc-400 hover:text-zinc-100 transition-all">
-            <Filter className="w-4 h-4" />
-            Filter
-          </button>
         </div>
       </div>
 
@@ -230,19 +326,30 @@ export default function Dashboard() {
           <h2 className="text-sm font-semibold text-zinc-600 uppercase tracking-widest mb-4 px-2">Subfolders</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {folders.map((folder) => (
-              <Link 
-                key={folder.id} 
-                to={`/folder/${folder.id}`}
-                className="flex items-center gap-4 p-4 bg-zinc-900 border border-zinc-800 rounded-2xl hover:border-indigo-500/50 hover:bg-zinc-800/50 transition-all group"
-              >
-                <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                  <FolderPlus className="w-5 h-5 text-indigo-400" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-sm truncate">{folder.name}</h3>
-                  <p className="text-xs text-zinc-500">Folder</p>
-                </div>
-              </Link>
+              <div key={folder.id} className="relative group">
+                <Link 
+                  to={`/folder/${folder.id}`}
+                  className="flex items-center gap-4 p-4 bg-zinc-900 border border-zinc-800 rounded-2xl hover:border-indigo-500/50 hover:bg-zinc-800/50 transition-all"
+                >
+                  <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <FolderPlus className="w-5 h-5 text-indigo-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-sm truncate">{folder.name}</h3>
+                    <p className="text-xs text-zinc-500">Folder</p>
+                  </div>
+                </Link>
+                <button 
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleDeleteFolder(folder.id);
+                  }}
+                  className="absolute top-2 right-2 p-1.5 bg-zinc-950/50 text-zinc-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all z-10"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -253,18 +360,15 @@ export default function Dashboard() {
         <h2 className="text-sm font-semibold text-zinc-600 uppercase tracking-widest mb-4 px-2">Artifacts</h2>
         {filteredArtifacts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 bg-zinc-900/20 border-2 border-dashed border-zinc-800 rounded-3xl text-center">
-            <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center mb-4 border border-zinc-800">
-              <FileCode className="w-8 h-8 text-zinc-600" />
-            </div>
-            <h3 className="text-lg font-semibold mb-2">No artifacts found</h3>
+            <h3 className="text-lg font-semibold mb-2">No documents found</h3>
             <p className="text-zinc-500 max-w-xs mx-auto mb-6">
-              Start by uploading an HTML file generated by your favorite AI tool.
+              Start by uploading a file generated by your favorite AI tool.
             </p>
             <button 
               onClick={() => setIsUploadModalOpen(true)}
               className="px-6 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-500 transition-all font-medium"
             >
-              Upload your first artifact
+              Upload your first document
             </button>
           </div>
         ) : (
@@ -298,12 +402,20 @@ export default function Dashboard() {
                     <div className="p-5">
                       <div className="flex items-start justify-between mb-3">
                         <h3 className="font-bold text-lg truncate flex-1 pr-4">{artifact.title}</h3>
-                        <button 
-                          onClick={() => handleDeleteArtifact(artifact.id)}
-                          className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button 
+                            onClick={() => handleToggleFavorite(artifact.id, !!artifact.isFavorite)}
+                            className={`p-1.5 rounded-lg transition-all ${artifact.isFavorite ? 'text-yellow-400 bg-yellow-400/10' : 'text-zinc-600 hover:text-yellow-400 hover:bg-yellow-400/10'}`}
+                          >
+                            <Star className="w-4 h-4" fill={artifact.isFavorite ? "currentColor" : "none"} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteArtifact(artifact.id, artifact.size)}
+                            className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                       <div className="flex flex-wrap gap-2 mb-4">
                         {artifact.tags.map((tag, i) => (
@@ -343,7 +455,7 @@ export default function Dashboard() {
                         <ExternalLink className="w-4 h-4" />
                       </Link>
                       <button 
-                        onClick={() => handleDeleteArtifact(artifact.id)}
+                        onClick={() => handleDeleteArtifact(artifact.id, artifact.size)}
                         className="p-2 bg-zinc-800 hover:bg-red-500/10 rounded-lg text-zinc-400 hover:text-red-400 transition-all"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -395,11 +507,18 @@ export default function Dashboard() {
                   <Upload className={`w-8 h-8 ${isDragActive ? 'text-indigo-400' : 'text-zinc-600'}`} />
                 </div>
                 <h3 className="text-lg font-semibold mb-2">
-                  {isDragActive ? 'Drop them here!' : 'Drag & drop HTML files'}
+                  {isDragActive ? 'Drop them here!' : 'Drag & drop artifacts'}
                 </h3>
                 <p className="text-zinc-500 text-sm mb-8">
-                  Upload files generated by Claude, ChatGPT, or any other AI tool.
+                  Upload HTML, Markdown, JSX, TSX, JS, TS, CSS, or JSON files generated by Claude, ChatGPT, or any other AI tool.
                 </p>
+
+                {error && (
+                  <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 text-red-400 text-sm">
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    <p>{error}</p>
+                  </div>
+                )}
                 <button className="px-6 py-2.5 bg-zinc-100 text-zinc-950 rounded-xl font-bold hover:bg-white transition-all">
                   Select Files
                 </button>

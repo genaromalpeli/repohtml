@@ -45,6 +45,8 @@ export default function App() {
         
         <Route element={<Layout user={user} />}>
           <Route path="/dashboard" element={user ? <Dashboard /> : <Navigate to="/login" />} />
+          <Route path="/favorites" element={user ? <Dashboard filter="favorites" /> : <Navigate to="/login" />} />
+          <Route path="/recent" element={user ? <Dashboard filter="recent" /> : <Navigate to="/login" />} />
           <Route path="/folder/:folderId" element={user ? <Dashboard /> : <Navigate to="/login" />} />
           <Route path="/settings" element={user ? <Settings /> : <Navigate to="/login" />} />
         </Route>

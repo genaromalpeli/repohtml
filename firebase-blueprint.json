@@ -9,6 +9,8 @@
         "email": { "type": "string", "format": "email" },
         "displayName": { "type": "string" },
         "photoURL": { "type": "string" },
+        "storageUsed": { "type": "number" },
+        "storageQuota": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email"]
@@ -28,19 +30,22 @@
     },
     "Artifact": {
       "title": "Artifact",
-      "description": "An AI-generated HTML document",
+      "description": "An AI-generated document (HTML, Markdown, or Code)",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "title": { "type": "string" },
         "content": { "type": "string" },
+        "type": { "type": "string", "enum": ["html", "markdown", "jsx", "tsx", "javascript", "typescript", "css", "json"] },
         "ownerId": { "type": "string" },
         "folderId": { "type": "string" },
         "tags": { "type": "array", "items": { "type": "string" } },
+        "isFavorite": { "type": "boolean" },
+        "size": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["title", "content", "ownerId"]
+      "required": ["title", "content", "type", "ownerId"]
     }
   },
   "firestore": {
