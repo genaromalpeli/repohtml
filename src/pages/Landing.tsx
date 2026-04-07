@@ -12,7 +12,7 @@ export default function Landing() {
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
               <Sparkles className="w-5 h-5 text-white" />
             </div>
-            <span className="font-semibold text-xl tracking-tight">Artifact</span>
+            <span className="font-logo font-bold text-2xl tracking-tight">Artify</span>
           </div>
           <div className="flex items-center gap-6">
             <Link to="/login" className="text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">
@@ -36,11 +36,11 @@ export default function Landing() {
             <span className="inline-block px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-xs font-semibold mb-6 border border-indigo-500/20">
               The Home for AI-Generated HTML
             </span>
-            <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-8 bg-gradient-to-b from-white to-zinc-500 bg-clip-text text-transparent">
+            <h1 className="text-5xl md:text-7xl font-logo font-bold tracking-tight mb-8 bg-gradient-to-b from-white to-zinc-500 bg-clip-text text-transparent">
               Organize your AI <br /> artifacts in one place.
             </h1>
             <p className="text-zinc-400 text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed">
-              Claude and ChatGPT generate beautiful HTML documents. Artifact gives them a home. 
+              Claude and ChatGPT generate beautiful HTML documents. Artify gives them a home. 
               Store, organize, and share your AI-powered reports, presentations, and one-pagers.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -122,7 +122,7 @@ export default function Landing() {
 
       {/* Footer */}
       <footer className="py-10 border-t border-zinc-900 text-center text-zinc-500 text-sm">
-        <p>© 2026 Artifact. Built for the AI era.</p>
+        <p>© 2026 Artify. Built for the AI era.</p>
       </footer>
     </div>
   );

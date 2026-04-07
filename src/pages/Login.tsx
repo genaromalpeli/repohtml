@@ -1,7 +1,8 @@
 import { motion } from 'motion/react';
-import { Sparkles, Chrome } from 'lucide-react';
+import { Sparkles, Chrome, ArrowLeft } from 'lucide-react';
 import { signInWithGoogle } from '../lib/firebase';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 export default function Login() {
   const [loading, setLoading] = useState(false);
@@ -21,18 +22,26 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-6 selection:bg-indigo-500/30">
+    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-6 selection:bg-indigo-500/30 relative">
+      <Link 
+        to="/" 
+        className="absolute top-8 left-8 flex items-center gap-2 text-zinc-500 hover:text-zinc-100 transition-colors text-sm font-medium group"
+      >
+        <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+        Back to Landing
+      </Link>
+
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6 }}
-        className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-8 shadow-2xl"
+        className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl"
       >
         <div className="flex flex-col items-center text-center mb-10">
           <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center mb-6 shadow-lg shadow-indigo-600/20">
             <Sparkles className="w-7 h-7 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white mb-2">Welcome to Artifact</h1>
+          <h1 className="text-3xl font-logo font-bold text-white mb-2">Welcome to Artify</h1>
           <p className="text-zinc-400">Sign in to start organizing your AI artifacts.</p>
         </div>
 
@@ -60,15 +69,6 @@ export default function Login() {
             {error}
           </motion.p>
         )}
-
-        <div className="mt-10 pt-8 border-t border-zinc-800 text-center">
-          <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-4">Trusted by teams at</p>
-          <div className="flex justify-center gap-6 opacity-30 grayscale invert">
-            <div className="w-20 h-6 bg-zinc-700 rounded" />
-            <div className="w-20 h-6 bg-zinc-700 rounded" />
-            <div className="w-20 h-6 bg-zinc-700 rounded" />
-          </div>
-        </div>
       </motion.div>
     </div>
   );
